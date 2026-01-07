@@ -5,6 +5,9 @@ WORKDIR /app
 
 RUN apk add --no-cache git
 
+ENV NEXT_TELEMETRY_DISABLED=1 \
+  NEXT_DISABLE_SWC_NATIVE=1
+
 RUN git clone --depth 1 -b main https://github.com/llingua/HomeSweetHome . && \
   npm install --verbose && \
   npm run build && \
