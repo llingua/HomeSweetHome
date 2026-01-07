@@ -1,0 +1,113 @@
+@import 'maplibre-gl/dist/maplibre-gl.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --glass-50: 248 252 255;
+  --glass-100: 236 245 255;
+  --glass-200: 210 230 250;
+  --glass-300: 150 188 230;
+  --glass-400: 100 140 200;
+  --glass-surface: 255 255 255;
+  --glass-border: 255 255 255;
+  --glass-highlight: 255 255 255;
+  --glass-shadow: 12 24 50;
+  --accent: 95 205 255;
+  --accent-2: 255 189 114;
+  --ink: 10 18 30;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-body);
+  color: rgb(var(--ink));
+  background: radial-gradient(circle at top, rgba(255, 255, 255, 0.25), transparent 42%),
+    linear-gradient(135deg, rgba(120, 200, 255, 0.45), rgba(255, 216, 180, 0.32) 40%, rgba(170, 255, 224, 0.3));
+  min-height: 100vh;
+}
+
+.liquid-surface {
+  background: linear-gradient(
+    135deg,
+    rgba(var(--glass-surface), 0.32),
+    rgba(var(--glass-surface), 0.1)
+  );
+  border: 1px solid rgba(var(--glass-border), 0.3);
+  box-shadow: 0 20px 45px rgba(var(--glass-shadow), 0.22),
+    inset 0 1px 0 rgba(var(--glass-highlight), 0.45);
+  backdrop-filter: blur(20px) saturate(160%);
+}
+
+.glass-outline {
+  border: 1px solid rgba(var(--glass-border), 0.35);
+  box-shadow: inset 0 1px 0 rgba(var(--glass-highlight), 0.5);
+}
+
+.glass-highlight {
+  background: linear-gradient(
+    120deg,
+    rgba(var(--glass-highlight), 0.45),
+    rgba(var(--glass-highlight), 0.05)
+  );
+}
+
+.glass-grid {
+  background-image: radial-gradient(circle at 25% 25%, rgba(255, 255, 255, 0.22), transparent 45%),
+    radial-gradient(circle at 75% 20%, rgba(255, 255, 255, 0.18), transparent 50%),
+    radial-gradient(circle at 25% 75%, rgba(255, 255, 255, 0.16), transparent 55%);
+}
+
+.glass-panel {
+  position: relative;
+  overflow: hidden;
+}
+
+.glass-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), transparent 55%);
+  opacity: 0.6;
+}
+
+.glass-panel > * {
+  position: relative;
+  z-index: 1;
+}
+
+.glass-card {
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.08));
+  border: 1px solid rgba(var(--glass-border), 0.35);
+  box-shadow: 0 12px 30px rgba(var(--glass-shadow), 0.18),
+    inset 0 1px 0 rgba(var(--glass-highlight), 0.4);
+  backdrop-filter: blur(16px) saturate(150%);
+}
+
+.glass-button {
+  box-shadow: 0 10px 20px rgba(var(--glass-shadow), 0.2),
+    inset 0 1px 0 rgba(var(--glass-highlight), 0.5);
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(90, 130, 180, 0.4);
+  border-radius: 999px;
+}
+
+.map-marker {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 6px 14px rgba(15, 30, 50, 0.35);
+}
