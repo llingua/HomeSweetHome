@@ -17,6 +17,8 @@
   --accent: 95 205 255;
   --accent-2: 255 189 114;
   --ink: 10 18 30;
+  --font-display: 'Sora', 'Manrope', 'Montserrat', 'Avenir', 'Segoe UI', sans-serif;
+  --font-body: 'Manrope', 'Sora', 'Inter', 'Segoe UI', sans-serif;
 }
 
 * {
