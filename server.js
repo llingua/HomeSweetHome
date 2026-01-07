@@ -1,9 +1,14 @@
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 const port = process.env.PORT || process.env.EXPOSED_PORT || 8092;
-const args = ['start', '-p', String(port)];
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const nextBin = join(__dirname, 'node_modules', 'next', 'dist', 'bin', 'next');
+const args = [nextBin, 'start', '-p', String(port)];
 
-const child = spawn('next', args, {
+const child = spawn(process.execPath, args, {
   stdio: 'inherit',
   env: { ...process.env, PORT: String(port) },
 });
