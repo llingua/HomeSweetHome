@@ -26,4 +26,4 @@ hassio_api: true
 ports:
   8092/tcp: null
 
-image: homesweethome-{arch}
+image: ghcr.io/llingua/homesweethome-{arch}

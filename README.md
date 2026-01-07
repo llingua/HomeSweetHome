@@ -57,7 +57,7 @@ docker build -t homesweethome-addon ./addon-homesweethome
 ```
 
 ### Deploy produzione
-- Pubblica immagini multi-arch con tag `homesweethome-{arch}`.
+- Pubblica immagini multi-arch con tag `ghcr.io/llingua/homesweethome-{arch}`.
 - Verifica ingress attivo su porta `8092`.
 - Se cambi repository/branch aggiorna `addon-homesweethome/Dockerfile`.
 
