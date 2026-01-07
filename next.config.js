@@ -1,12 +1,10 @@
 /** @type {import('next').NextConfig} */
-const isAddon = process.env.ADDON === 'true' || process.env.ADDON === '1';
-
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
     useWasmBinary: true,
   },
-  assetPrefix: isAddon ? './' : undefined,
+  assetPrefix: process.env.NEXT_ASSET_PREFIX || undefined,
 };
 
 export default nextConfig;
