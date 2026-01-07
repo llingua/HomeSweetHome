@@ -1,7 +1,9 @@
 ARG BUILD_FROM=alpine:3.18
 
-FROM node:22 AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
+
+RUN apk add --no-cache git
 
 RUN git clone --depth 1 -b main https://github.com/llingua/HomeSweetHome . && \
   npm install --verbose && \
