@@ -3,16 +3,15 @@ ARG BUILD_FROM=alpine:3.18
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-RUN apk add --no-cache git
-
 ENV NEXT_TELEMETRY_DISABLED=1 \
   NEXT_DISABLE_SWC_NATIVE=1 \
   ADDON=true
 
-RUN git clone --depth 1 -b main https://github.com/llingua/HomeSweetHome . && \
-  npm install --verbose && \
-  npm run build && \
-  npm prune --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY . .
+RUN npm run build && npm prune --omit=dev
 
 FROM $BUILD_FROM
 WORKDIR /rootfs

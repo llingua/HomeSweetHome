@@ -46,9 +46,12 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: ./addon-homesweethome
+          context: .
+          file: ./addon-homesweethome/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
             ghcr.io/llingua/homesweethome-amd64:${{ steps.version.outputs.version }}
             ghcr.io/llingua/homesweethome-aarch64:${{ steps.version.outputs.version }}
