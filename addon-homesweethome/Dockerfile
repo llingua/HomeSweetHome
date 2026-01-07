@@ -25,7 +25,7 @@ COPY --from=builder /app/server.js ./server.js
 RUN apk add --no-cache nodejs-current bash jq curl && \
   ln -s /rootfs/data /data
 
-COPY run.sh /run.sh
+COPY addon-homesweethome/run.sh /run.sh
 RUN chmod +x /run.sh
 
 RUN curl -J -L -o /tmp/bashio.tar.gz \
