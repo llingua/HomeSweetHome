@@ -12,6 +12,7 @@ export async function GET(request: Request) {
       : states;
     return NextResponse.json({ entities: filtered });
   } catch (error) {
+    console.error('HA states fetch failed:', error);
     return NextResponse.json({ entities: [] }, { status: 200 });
   }
 }

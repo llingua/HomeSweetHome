@@ -16,13 +16,13 @@ type HaEntity = {
 
 async function fetchStates(ids: string[]) {
   const query = ids.length ? `?ids=${encodeURIComponent(ids.join(','))}` : '';
-  const response = await fetch(`api/ha/states${query}`, { cache: 'no-store' });
+  const response = await fetch(`/api/ha/states${query}`, { cache: 'no-store' });
   const payload = await response.json();
   return payload.entities as HaEntity[];
 }
 
 async function callService(domain: string, service: string, data: Record<string, unknown>) {
-  await fetch('api/ha/service', {
+  await fetch('/api/ha/service', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ domain, service, service_data: data }),
@@ -51,7 +51,7 @@ export function WidgetRenderer({ widget }: { widget: DashboardWidget }) {
   }, [entity]);
 
   if (widget.type === 'chart') {
-    return <EnergyChart />;
+    return <EnergyChart widget={widget} />;
   }
 
   if (widget.type === 'map') {

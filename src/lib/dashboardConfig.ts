@@ -12,6 +12,9 @@ export type DashboardWidget = {
   title: string;
   type: WidgetType;
   entityId?: string;
+  chartEntityIds?: string[];
+  chartRangeHours?: number;
+  chartMode?: 'history' | 'forecast';
   unit?: string;
   span?: number;
 };

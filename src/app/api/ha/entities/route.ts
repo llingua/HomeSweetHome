@@ -13,6 +13,7 @@ export async function GET(request: Request) {
     });
     return NextResponse.json({ entities: filtered });
   } catch (error) {
+    console.error('HA entities fetch failed:', error);
     return NextResponse.json({ entities: [] }, { status: 200 });
   }
 }
