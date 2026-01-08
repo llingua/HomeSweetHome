@@ -1,5 +1,5 @@
-import { redirect } from 'next/navigation';
+import { DashboardShell } from '@/components/dashboard/DashboardShell';
 
 export default function Home() {
-  redirect('/views/home');
+  return <DashboardShell viewId="home" />;
 }

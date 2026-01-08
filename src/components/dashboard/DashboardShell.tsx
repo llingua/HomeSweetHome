@@ -16,12 +16,12 @@ type DashboardShellProps = {
 };
 
 async function fetchConfig(): Promise<DashboardConfig> {
-  const response = await fetch('/api/dashboard', { cache: 'no-store' });
+  const response = await fetch('api/dashboard', { cache: 'no-store' });
   return response.json();
 }
 
 async function saveConfig(config: DashboardConfig) {
-  const response = await fetch('/api/dashboard', {
+  const response = await fetch('api/dashboard', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config),
@@ -56,7 +56,7 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
   const { data: entities } = useQuery({
     queryKey: ['ha-entities', entityQuery],
     queryFn: async () => {
-      const response = await fetch(`/api/ha/entities?q=${encodeURIComponent(entityQuery)}`);
+      const response = await fetch(`api/ha/entities?q=${encodeURIComponent(entityQuery)}`);
       const payload = await response.json();
       return payload.entities as Array<{ entity_id: string }>;
     },
@@ -130,7 +130,7 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
     };
     next.views.push(view);
     await mutateAsync(next);
-    router.push(`/views/${id}`);
+    router.push(`views/${id}`);
   };
 
   return (
@@ -162,7 +162,7 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
         {config.views.map((view) => (
           <Link
             key={view.id}
-            href={`/views/${view.id}`}
+            href={`views/${view.id}`}
             className={`glass-button rounded-full border border-white/40 px-4 py-2 text-xs font-semibold transition ${
               view.id === activeView.id ? 'bg-white/70 text-ink shadow-glow' : 'bg-white/20 text-ink'
             }`}
