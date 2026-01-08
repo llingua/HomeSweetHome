@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { GlassPanel } from '@/components/ui/GlassPanel';
 import { GlassButton } from '@/components/ui/GlassButton';
@@ -33,6 +34,7 @@ const widgetTypes: WidgetType[] = ['stat', 'toggle', 'slider', 'chart', 'list', 
 export function DashboardShell({ viewId }: DashboardShellProps) {
   const queryClient = useQueryClient();
   const { editMode, toggleEditMode } = useDashboardStore();
+  const router = useRouter();
   const { data: config } = useQuery({
     queryKey: ['dashboard'],
     queryFn: fetchConfig,
@@ -118,6 +120,19 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
     await mutateAsync(next);
   };
 
+  const handleAddView = async () => {
+    const next = JSON.parse(JSON.stringify(config)) as DashboardConfig;
+    const id = `view-${Date.now()}`;
+    const view: DashboardView = {
+      id,
+      name: `Vista ${next.views.length + 1}`,
+      widgets: [],
+    };
+    next.views.push(view);
+    await mutateAsync(next);
+    router.push(`/views/${id}`);
+  };
+
   return (
     <main className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6">
       <GlassPanel className="flex flex-wrap items-center justify-between gap-4">
@@ -137,7 +152,9 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
           <GlassButton tone="ghost" onClick={toggleEditMode}>
             {editMode ? 'Esci edit' : 'Modifica'}
           </GlassButton>
-          <GlassButton tone="accent">Nuova vista</GlassButton>
+          <GlassButton tone="accent" onClick={handleAddView}>
+            Nuova vista
+          </GlassButton>
         </div>
       </GlassPanel>
 
