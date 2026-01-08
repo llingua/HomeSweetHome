@@ -26,6 +26,14 @@ npm run dev
 
 Apri `http://localhost:3000`.
 
+### Collegamento Home Assistant (locale)
+Imposta un token di Home Assistant per leggere le entita e inviare comandi:
+```bash
+export HA_BASE_URL="http://localhost:8123/api"
+export HA_TOKEN="LONG_LIVED_TOKEN"
+npm run dev
+```
+
 ## Build e run produzione
 ```bash
 npm run build
@@ -45,6 +53,8 @@ Parametri principali:
 - porta ingress: `8092`
 - nome add-on: HomeSweetHome Dashboard
 - dati separati: `homesweethome`
+
+In add-on, l'accesso a Home Assistant usa il token Supervisor (`SUPERVISOR_TOKEN`) senza configurazioni extra.
 
 ### Installazione add-on (Home Assistant)
 1. Aggiungi questo repo come custom repository in Home Assistant (Supervisor → Add-on Store).
