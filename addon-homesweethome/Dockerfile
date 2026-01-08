@@ -1,6 +1,7 @@
 ARG BUILD_FROM=alpine:3.18
+ARG BUILDPLATFORM
 
-FROM node:20-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
 WORKDIR /app
 
 ENV NEXT_TELEMETRY_DISABLED=1 \
