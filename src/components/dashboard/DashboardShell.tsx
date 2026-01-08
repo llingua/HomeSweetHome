@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -167,6 +167,8 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
   });
 
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
+  const [widgetDraft, setWidgetDraft] = useState<DashboardWidget | null>(null);
+  const [widgetDraftBaseline, setWidgetDraftBaseline] = useState<DashboardWidget | null>(null);
   const [newWidget, setNewWidget] = useState<DashboardWidget>({
     id: '',
     title: '',
@@ -195,6 +197,25 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
     if (!config) return undefined;
     return config.views.find((view) => view.id === viewId) ?? config.views[0];
   }, [config, viewId]);
+
+  useEffect(() => {
+    if (!activeView || !selectedWidgetId) {
+      setWidgetDraft(null);
+      setWidgetDraftBaseline(null);
+      setChartEntityDraft('');
+      return;
+    }
+    const widget = activeView.widgets.find((item) => item.id === selectedWidgetId);
+    const snapshot = widget ? (JSON.parse(JSON.stringify(widget)) as DashboardWidget) : null;
+    setWidgetDraft(snapshot);
+    setWidgetDraftBaseline(snapshot);
+    setChartEntityDraft('');
+  }, [activeView, selectedWidgetId]);
+
+  const hasWidgetDraftChanges = useMemo(() => {
+    if (!widgetDraft || !widgetDraftBaseline) return false;
+    return JSON.stringify(widgetDraft) !== JSON.stringify(widgetDraftBaseline);
+  }, [widgetDraft, widgetDraftBaseline]);
 
   const entityIdsToResolve = useMemo(() => {
     const ids = new Set<string>();
@@ -304,7 +325,16 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
     if (!view) return;
     view.widgets = view.widgets.filter((item) => item.id !== selectedWidgetId);
     setSelectedWidgetId(null);
+    setWidgetDraft(null);
+    setWidgetDraftBaseline(null);
     await mutateAsync(next);
+  };
+
+  const handleSaveWidget = async () => {
+    if (!selectedWidgetId || !widgetDraft) return;
+    const { id: _id, ...partial } = widgetDraft;
+    await handleUpdateWidget(partial);
+    setWidgetDraftBaseline(widgetDraft);
   };
 
   const handleAddView = async () => {
@@ -381,24 +411,36 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                 )}
               </div>
               <WidgetRenderer widget={widget} />
-              {editMode && selectedWidgetId === widget.id && (
+              {editMode && selectedWidgetId === widget.id && widgetDraft && (
                 <div className="space-y-2 rounded-2xl border border-white/60 bg-white/60 p-3">
                   <p className="text-[10px] uppercase tracking-[0.2em] text-ink/60">Modifica widget</p>
                   <input
                     className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
                     placeholder="Titolo"
-                    value={widget.title}
-                    onChange={(event) => handleUpdateWidget({ title: event.target.value })}
+                    value={widgetDraft.title}
+                    onChange={(event) =>
+                      setWidgetDraft((current) =>
+                        current ? { ...current, title: event.target.value } : current,
+                      )
+                    }
                   />
                   <select
                     className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                    value={widget.type}
+                    value={widgetDraft.type}
                     onChange={(event) => {
                       const nextType = event.target.value as WidgetType;
-                      handleUpdateWidget({
-                        type: nextType,
-                        chartMode: nextType === 'chart' ? widget.chartMode ?? 'history' : widget.chartMode,
-                      });
+                      setWidgetDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              type: nextType,
+                              chartMode:
+                                nextType === 'chart'
+                                  ? current.chartMode ?? 'history'
+                                  : current.chartMode,
+                            }
+                          : current,
+                      );
                     }}
                   >
                     {widgetTypes.map((type) => (
@@ -407,19 +449,24 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                       </option>
                     ))}
                   </select>
-                  {widget.type === 'chart' ? (
+                  {widgetDraft.type === 'chart' ? (
                     <>
                       <select
                         className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                        value={widget.chartMode ?? 'history'}
+                        value={widgetDraft.chartMode ?? 'history'}
                         onChange={(event) => {
                           const nextMode = event.target.value as 'history' | 'forecast';
-                          handleUpdateWidget({ chartMode: nextMode });
-                          setEntityFilter(getEntityFilterForWidget(widget.type, nextMode));
+                          setWidgetDraft((current) =>
+                            current ? { ...current, chartMode: nextMode } : current,
+                          );
+                          setEntityFilter(getEntityFilterForWidget(widgetDraft.type, nextMode));
                         }}
                         onFocus={() =>
                           setEntityFilter(
-                            getEntityFilterForWidget(widget.type, widget.chartMode ?? 'history'),
+                            getEntityFilterForWidget(
+                              widgetDraft.type,
+                              widgetDraft.chartMode ?? 'history',
+                            ),
                           )
                         }
                       >
@@ -427,66 +474,81 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                         <option value="forecast">Previsione</option>
                       </select>
                       <div className="flex flex-wrap gap-2">
-                        {(widget.chartEntityIds ?? []).length === 0 ? (
+                        {(widgetDraft.chartEntityIds ?? []).length === 0 ? (
                           <span className="text-xs text-ink/50">Nessuna entita selezionata.</span>
                         ) : (
-                          (widget.chartEntityIds ?? []).map((entry) => (
+                          (widgetDraft.chartEntityIds ?? []).map((entry) => (
                             <div
                               key={entry}
                               className="w-full rounded-2xl border border-white/50 bg-white/60 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-ink/60"
                             >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="truncate">{getEntityDisplayName(entry)}</span>
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="color"
-                                  className="h-6 w-8 cursor-pointer rounded border border-white/50 bg-white/70 p-0"
-                                  value={widget.chartEntityColors?.[entry] ?? '#63d1ff'}
-                                  onChange={(event) =>
-                                    handleUpdateWidget({
-                                      chartEntityColors: updateEntityColor(
-                                        widget.chartEntityColors,
-                                        entry,
-                                        event.target.value,
-                                      ),
-                                    })
-                                  }
-                                />
-                                <button
-                                  type="button"
-                                  className="text-ink/60 transition hover:text-ink"
-                                  onClick={() =>
-                                    handleUpdateWidget({
-                                      chartEntityIds: (widget.chartEntityIds ?? []).filter(
-                                        (value) => value !== entry,
-                                      ),
-                                      chartEntityLabels: removeEntityLabel(
-                                        widget.chartEntityLabels,
-                                        entry,
-                                      ),
-                                      chartEntityColors: removeEntityColor(
-                                        widget.chartEntityColors,
-                                        entry,
-                                      ),
-                                    })
-                                  }
-                                >
-                                  ✕
-                                </button>
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate">{getEntityDisplayName(entry)}</span>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="color"
+                                    className="h-6 w-8 cursor-pointer rounded border border-white/50 bg-white/70 p-0"
+                                    value={widgetDraft.chartEntityColors?.[entry] ?? '#63d1ff'}
+                                    onChange={(event) =>
+                                      setWidgetDraft((current) =>
+                                        current
+                                          ? {
+                                              ...current,
+                                              chartEntityColors: updateEntityColor(
+                                                current.chartEntityColors,
+                                                entry,
+                                                event.target.value,
+                                              ),
+                                            }
+                                          : current,
+                                      )
+                                    }
+                                  />
+                                  <button
+                                    type="button"
+                                    className="text-ink/60 transition hover:text-ink"
+                                    onClick={() =>
+                                      setWidgetDraft((current) =>
+                                        current
+                                          ? {
+                                              ...current,
+                                              chartEntityIds: (current.chartEntityIds ?? []).filter(
+                                                (value) => value !== entry,
+                                              ),
+                                              chartEntityLabels: removeEntityLabel(
+                                                current.chartEntityLabels,
+                                                entry,
+                                              ),
+                                              chartEntityColors: removeEntityColor(
+                                                current.chartEntityColors,
+                                                entry,
+                                              ),
+                                            }
+                                          : current,
+                                      )
+                                    }
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
                               </div>
-                            </div>
                               <input
                                 className="mt-2 w-full rounded-lg border border-white/50 bg-white/70 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-ink/70"
                                 placeholder="Nome serie"
-                                value={widget.chartEntityLabels?.[entry] ?? ''}
+                                value={widgetDraft.chartEntityLabels?.[entry] ?? ''}
                                 onChange={(event) =>
-                                  handleUpdateWidget({
-                                    chartEntityLabels: updateEntityLabel(
-                                      widget.chartEntityLabels,
-                                      entry,
-                                      event.target.value,
-                                    ),
-                                  })
+                                  setWidgetDraft((current) =>
+                                    current
+                                      ? {
+                                          ...current,
+                                          chartEntityLabels: updateEntityLabel(
+                                            current.chartEntityLabels,
+                                            entry,
+                                            event.target.value,
+                                          ),
+                                        }
+                                      : current,
+                                  )
                                 }
                               />
                             </div>
@@ -502,12 +564,18 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                             setChartEntityDraft(event.target.value);
                             setEntityQuery(event.target.value);
                             setEntityFilter(
-                              getEntityFilterForWidget(widget.type, widget.chartMode ?? 'history'),
+                              getEntityFilterForWidget(
+                                widgetDraft.type,
+                                widgetDraft.chartMode ?? 'history',
+                              ),
                             );
                           }}
                           onFocus={() =>
                             setEntityFilter(
-                              getEntityFilterForWidget(widget.type, widget.chartMode ?? 'history'),
+                              getEntityFilterForWidget(
+                                widgetDraft.type,
+                                widgetDraft.chartMode ?? 'history',
+                              ),
                             )
                           }
                           list="ha-entities"
@@ -518,23 +586,29 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                           onClick={() => {
                             const entries = parseEntityIds(chartEntityDraft);
                             if (entries.length === 0) return;
-                            let next = widget.chartEntityIds ?? [];
+                            let next = widgetDraft.chartEntityIds ?? [];
                             entries.forEach((entry) => {
                               next = addEntityId(next, entry);
                             });
-                            handleUpdateWidget({ chartEntityIds: next });
+                            setWidgetDraft((current) =>
+                              current ? { ...current, chartEntityIds: next } : current,
+                            );
                             setChartEntityDraft('');
                           }}
                         >
                           Aggiungi
                         </GlassButton>
                       </div>
-                      {widget.chartMode !== 'forecast' && (
+                      {widgetDraft.chartMode !== 'forecast' && (
                         <select
                           className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                          value={widget.chartRangeHours ?? 24}
+                          value={widgetDraft.chartRangeHours ?? 24}
                           onChange={(event) =>
-                            handleUpdateWidget({ chartRangeHours: Number(event.target.value) })
+                            setWidgetDraft((current) =>
+                              current
+                                ? { ...current, chartRangeHours: Number(event.target.value) }
+                                : current,
+                            )
                           }
                         >
                           {chartRanges.map((range) => (
@@ -547,27 +621,48 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                       <input
                         className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
                         placeholder="Unita asse Y (es. °C, kWh)"
-                        value={widget.unit ?? ''}
-                        onChange={(event) => handleUpdateWidget({ unit: event.target.value })}
+                        value={widgetDraft.unit ?? ''}
+                        onChange={(event) =>
+                          setWidgetDraft((current) =>
+                            current ? { ...current, unit: event.target.value } : current,
+                          )
+                        }
                       />
                     </>
                   ) : (
                     <input
                       className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
                       placeholder="entity_id (opzionale)"
-                      value={widget.entityId ?? ''}
+                      value={widgetDraft.entityId ?? ''}
                       onChange={(event) => {
                         setEntityQuery(event.target.value);
-                        setEntityFilter(getEntityFilterForWidget(widget.type));
-                        handleUpdateWidget({ entityId: event.target.value });
+                        setEntityFilter(getEntityFilterForWidget(widgetDraft.type));
+                        setWidgetDraft((current) =>
+                          current ? { ...current, entityId: event.target.value } : current,
+                        );
                       }}
-                      onFocus={() => setEntityFilter(getEntityFilterForWidget(widget.type))}
+                      onFocus={() => setEntityFilter(getEntityFilterForWidget(widgetDraft.type))}
                       list="ha-entities"
                     />
                   )}
-                  <GlassButton tone="ghost" className="w-full" onClick={handleRemoveWidget}>
-                    Rimuovi widget
-                  </GlassButton>
+                  {hasWidgetDraftChanges && (
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-orange-600">
+                      Modifiche non salvate
+                    </p>
+                  )}
+                  <div className="flex gap-2">
+                    <GlassButton
+                      tone="accent"
+                      className="w-full"
+                      onClick={handleSaveWidget}
+                      disabled={!hasWidgetDraftChanges}
+                    >
+                      Salva widget
+                    </GlassButton>
+                    <GlassButton tone="ghost" className="w-full" onClick={handleRemoveWidget}>
+                      Rimuovi widget
+                    </GlassButton>
+                  </div>
                 </div>
               )}
             </GlassCard>
