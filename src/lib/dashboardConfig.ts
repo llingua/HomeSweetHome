@@ -19,6 +19,8 @@ export type DashboardWidget = {
   chartEntityColors?: Record<string, string>;
   unit?: string;
   span?: number;
+  rowSpan?: number;
+  spanMode?: 'grid';
 };
 
 export type DashboardView = {

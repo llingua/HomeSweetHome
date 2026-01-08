@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -52,6 +52,16 @@ const chartRanges = [
   { label: '3g', value: 72 },
   { label: '7g', value: 168 },
 ];
+const MAX_COLUMNS = 12;
+const MAX_ROW_SPAN = 6;
+const widgetSpanOptions = Array.from({ length: MAX_COLUMNS }, (_, index) => ({
+  label: `${index + 1} col`,
+  value: index + 1,
+}));
+const widgetRowSpanOptions = Array.from({ length: MAX_ROW_SPAN }, (_, index) => ({
+  label: `${index + 1} righe`,
+  value: index + 1,
+}));
 
 function parseEntityIds(value: string) {
   return value
@@ -152,6 +162,28 @@ function removeEntityColor(colors: Record<string, string> | undefined, entityId:
   return next;
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function normalizeSpan(widget: DashboardWidget) {
+  if (widget.spanMode === 'grid') {
+    return widget.span ?? 4;
+  }
+  const legacy = widget.span ?? 1;
+  return clamp(legacy * 4, 1, MAX_COLUMNS);
+}
+
+function normalizeRowSpan(widget: DashboardWidget) {
+  return clamp(widget.rowSpan ?? 1, 1, MAX_ROW_SPAN);
+}
+
+function getWidgetGridClasses(isEditMode: boolean) {
+  const classes = ['h-full', 'space-y-3'];
+  if (isEditMode) classes.push('relative');
+  return classes.join(' ');
+}
+
 export function DashboardShell({ viewId }: DashboardShellProps) {
   const queryClient = useQueryClient();
   const { editMode, toggleEditMode } = useDashboardStore();
@@ -169,6 +201,34 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [widgetDraft, setWidgetDraft] = useState<DashboardWidget | null>(null);
   const [widgetDraftBaseline, setWidgetDraftBaseline] = useState<DashboardWidget | null>(null);
+  const [isNewWidgetOpen, setIsNewWidgetOpen] = useState(false);
+  const [draggingWidgetId, setDraggingWidgetId] = useState<string | null>(null);
+  const [dragOverWidgetId, setDragOverWidgetId] = useState<string | null>(null);
+  const [resizingWidgetId, setResizingWidgetId] = useState<string | null>(null);
+  const [resizePreview, setResizePreview] = useState<
+    Record<string, { span: number; rowSpan: number }>
+  >({});
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const resizeStateRef = useRef<{
+    widgetId: string;
+    startX: number;
+    startY: number;
+    startSpan: number;
+    startRowSpan: number;
+    colWidth: number;
+    rowHeight: number;
+    gap: number;
+    maxCols: number;
+    maxRows: number;
+    cardLeft: number;
+    cardTop: number;
+  } | null>(null);
+  const resizePreviewRef = useRef<Record<string, { span: number; rowSpan: number }>>({});
+  const [gridColumns, setGridColumns] = useState(1);
+  const hasMigratedRef = useRef(false);
+  const updateWidgetByIdRef = useRef<
+    (widgetId: string, partial: Partial<DashboardWidget>) => Promise<void>
+  >(async () => undefined);
   const [newWidget, setNewWidget] = useState<DashboardWidget>({
     id: '',
     title: '',
@@ -178,6 +238,9 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
     chartMode: 'history',
     chartEntityLabels: {},
     chartEntityColors: {},
+    span: 4,
+    rowSpan: 1,
+    spanMode: 'grid',
   });
   const [entityQuery, setEntityQuery] = useState('');
   const [chartEntityDraft, setChartEntityDraft] = useState('');
@@ -197,6 +260,38 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
     if (!config) return undefined;
     return config.views.find((view) => view.id === viewId) ?? config.views[0];
   }, [config, viewId]);
+
+  useEffect(() => {
+    const updateGridColumns = () => {
+      const grid = gridRef.current;
+      if (!grid) return;
+      const styles = window.getComputedStyle(grid);
+      const cols = Number.parseInt(styles.getPropertyValue('--grid-cols'), 10);
+      setGridColumns(Number.isFinite(cols) && cols > 0 ? cols : 1);
+    };
+    updateGridColumns();
+    window.addEventListener('resize', updateGridColumns);
+    return () => window.removeEventListener('resize', updateGridColumns);
+  }, [editMode]);
+
+  useEffect(() => {
+    if (!config || hasMigratedRef.current) return;
+    let shouldMigrate = false;
+    const next = JSON.parse(JSON.stringify(config)) as DashboardConfig;
+    next.views.forEach((view) => {
+      view.widgets.forEach((widget) => {
+        if (widget.spanMode === 'grid') return;
+        widget.span = normalizeSpan(widget);
+        widget.rowSpan = normalizeRowSpan(widget);
+        widget.spanMode = 'grid';
+        shouldMigrate = true;
+      });
+    });
+    hasMigratedRef.current = true;
+    if (shouldMigrate) {
+      void mutateAsync(next);
+    }
+  }, [config, mutateAsync]);
 
   useEffect(() => {
     if (!activeView || !selectedWidgetId) {
@@ -266,14 +361,6 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
 
   const getEntityDisplayName = (id: string) => entityNameById.get(id) ?? id;
 
-  if (!config || !activeView) {
-    return (
-      <main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-10 sm:px-6">
-        <GlassPanel>Caricamento dashboard...</GlassPanel>
-      </main>
-    );
-  }
-
   const handleViewRename = async (value: string) => {
     const next = JSON.parse(JSON.stringify(config)) as DashboardConfig;
     const view = next.views.find((entry) => entry.id === activeView.id);
@@ -291,7 +378,9 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
       ...newWidget,
       id: `w-${Date.now()}`,
       title: newWidget.title.trim(),
-      span: newWidget.span || 1,
+      span: newWidget.span || 4,
+      rowSpan: newWidget.rowSpan || 1,
+      spanMode: 'grid',
     };
     view.widgets.push(widget);
     setNewWidget({
@@ -303,6 +392,9 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
       chartMode: 'history',
       chartEntityLabels: {},
       chartEntityColors: {},
+      span: 4,
+      rowSpan: 1,
+      spanMode: 'grid',
     });
     await mutateAsync(next);
   };
@@ -317,6 +409,23 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
     Object.assign(widget, partial);
     await mutateAsync(next);
   };
+
+  const handleUpdateWidgetById = async (
+    widgetId: string,
+    partial: Partial<DashboardWidget>,
+  ) => {
+    const next = JSON.parse(JSON.stringify(config)) as DashboardConfig;
+    const view = next.views.find((entry) => entry.id === activeView.id);
+    if (!view) return;
+    const widget = view.widgets.find((item) => item.id === widgetId);
+    if (!widget) return;
+    Object.assign(widget, partial);
+    await mutateAsync(next);
+  };
+
+  useEffect(() => {
+    updateWidgetByIdRef.current = handleUpdateWidgetById;
+  }, [handleUpdateWidgetById]);
 
   const handleRemoveWidget = async () => {
     if (!selectedWidgetId) return;
@@ -333,7 +442,7 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
   const handleSaveWidget = async () => {
     if (!selectedWidgetId || !widgetDraft) return;
     const { id: _id, ...partial } = widgetDraft;
-    await handleUpdateWidget(partial);
+    await handleUpdateWidget({ ...partial, spanMode: 'grid' });
     setWidgetDraftBaseline(widgetDraft);
   };
 
@@ -349,6 +458,128 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
     await mutateAsync(next);
     router.push(`views/${id}`);
   };
+
+  const handleMoveWidget = async (sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return;
+    const next = JSON.parse(JSON.stringify(config)) as DashboardConfig;
+    const view = next.views.find((entry) => entry.id === activeView.id);
+    if (!view) return;
+    const sourceIndex = view.widgets.findIndex((item) => item.id === sourceId);
+    const targetIndex = view.widgets.findIndex((item) => item.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const [moved] = view.widgets.splice(sourceIndex, 1);
+    view.widgets.splice(targetIndex, 0, moved);
+    await mutateAsync(next);
+  };
+
+  const updateResizePreview = useCallback((widgetId: string, span: number, rowSpan: number) => {
+    const next = { ...resizePreviewRef.current, [widgetId]: { span, rowSpan } };
+    resizePreviewRef.current = next;
+    setResizePreview(next);
+  }, []);
+
+  const clearResizePreview = useCallback((widgetId: string) => {
+    const next = { ...resizePreviewRef.current };
+    delete next[widgetId];
+    resizePreviewRef.current = next;
+    setResizePreview(next);
+  }, []);
+
+  const handleResizePointerMove = useCallback(
+    (event: PointerEvent) => {
+      const state = resizeStateRef.current;
+      if (!state) return;
+      const width = event.clientX - state.cardLeft;
+      const height = event.clientY - state.cardTop;
+      const colSpan = clamp(
+        Math.round((width + state.gap) / (state.colWidth + state.gap)),
+        1,
+        state.maxCols,
+      );
+      const rowSpan = clamp(
+        Math.round((height + state.gap) / (state.rowHeight + state.gap)),
+        1,
+        state.maxRows,
+      );
+      updateResizePreview(state.widgetId, colSpan, rowSpan);
+    },
+    [updateResizePreview],
+  );
+
+  const handleResizePointerUp = useCallback(
+    async (_event: PointerEvent) => {
+      const state = resizeStateRef.current;
+      if (!state) return;
+      window.removeEventListener('pointermove', handleResizePointerMove);
+      window.removeEventListener('pointerup', handleResizePointerUp);
+      const preview = resizePreviewRef.current[state.widgetId];
+      const finalSpan = preview?.span ?? state.startSpan;
+      const finalRowSpan = preview?.rowSpan ?? state.startRowSpan;
+      resizeStateRef.current = null;
+      setResizingWidgetId(null);
+      clearResizePreview(state.widgetId);
+      await updateWidgetByIdRef.current(state.widgetId, {
+        span: finalSpan,
+        rowSpan: finalRowSpan,
+        spanMode: 'grid',
+      });
+    },
+    [clearResizePreview, handleResizePointerMove],
+  );
+
+  const handleResizeStart = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>, widget: DashboardWidget) => {
+      if (!editMode) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const grid = gridRef.current;
+      const card = (event.currentTarget as HTMLElement).closest('[data-widget-card]');
+      if (!grid || !card) return;
+      const styles = window.getComputedStyle(grid);
+      const cols = Number.parseInt(styles.getPropertyValue('--grid-cols'), 10) || 1;
+      const gap =
+        Number.parseFloat(styles.columnGap || styles.gap || '') ||
+        Number.parseFloat(styles.getPropertyValue('gap')) ||
+        16;
+      const rowHeight =
+        Number.parseFloat(styles.getPropertyValue('--grid-row')) ||
+        Number.parseFloat(styles.gridAutoRows) ||
+        160;
+      const paddingLeft = Number.parseFloat(styles.paddingLeft) || 0;
+      const paddingRight = Number.parseFloat(styles.paddingRight) || 0;
+      const gridWidth = grid.clientWidth - paddingLeft - paddingRight;
+      const colWidth =
+        cols > 0 ? (gridWidth - gap * (cols - 1)) / cols : grid.clientWidth;
+      const cardRect = (card as HTMLElement).getBoundingClientRect();
+      resizeStateRef.current = {
+        widgetId: widget.id,
+        startX: event.clientX,
+        startY: event.clientY,
+        startSpan: normalizeSpan(widget),
+        startRowSpan: normalizeRowSpan(widget),
+        colWidth,
+        rowHeight,
+        gap,
+        maxCols: Math.max(cols, 1),
+        maxRows: MAX_ROW_SPAN,
+        cardLeft: cardRect.left,
+        cardTop: cardRect.top,
+      };
+      setResizingWidgetId(widget.id);
+      updateResizePreview(widget.id, normalizeSpan(widget), normalizeRowSpan(widget));
+      window.addEventListener('pointermove', handleResizePointerMove);
+      window.addEventListener('pointerup', handleResizePointerUp);
+    },
+    [editMode, handleResizePointerMove, handleResizePointerUp, updateResizePreview],
+  );
+
+  if (!config || !activeView) {
+    return (
+      <main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-10 sm:px-6">
+        <GlassPanel>Caricamento dashboard...</GlassPanel>
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6">
@@ -369,9 +600,16 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
           <GlassButton tone="ghost" onClick={toggleEditMode}>
             {editMode ? 'Esci edit' : 'Modifica'}
           </GlassButton>
-          <GlassButton tone="accent" onClick={handleAddView}>
-            Nuova vista
-          </GlassButton>
+          {editMode && (
+            <GlassButton tone="accent" onClick={() => setIsNewWidgetOpen(true)}>
+              Nuovo widget
+            </GlassButton>
+          )}
+          {editMode && (
+            <GlassButton tone="accent" onClick={handleAddView}>
+              Nuova vista
+            </GlassButton>
+          )}
         </div>
       </GlassPanel>
 
@@ -389,338 +627,206 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
         ))}
       </div>
 
-      <div className={`grid gap-6 ${editMode ? 'lg:grid-cols-[1fr_320px]' : ''}`}>
-        <GlassPanel className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {activeView.widgets.map((widget) => (
-            <GlassCard
-              key={widget.id}
-              className={`space-y-3 ${widget.span === 2 ? 'sm:col-span-2' : ''}`}
-            >
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold">{widget.title}</p>
-                {editMode && (
-                  <GlassButton
-                    tone="ghost"
-                    className="px-2 py-1 text-[10px]"
-                    onClick={() =>
-                      setSelectedWidgetId((current) => (current === widget.id ? null : widget.id))
-                    }
-                  >
-                    {selectedWidgetId === widget.id ? 'Chiudi' : 'Modifica'}
-                  </GlassButton>
-                )}
-              </div>
-              <WidgetRenderer widget={widget} />
-              {editMode && selectedWidgetId === widget.id && widgetDraft && (
-                <div className="space-y-2 rounded-2xl border border-white/60 bg-white/60 p-3">
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-ink/60">Modifica widget</p>
-                  <input
-                    className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                    placeholder="Titolo"
-                    value={widgetDraft.title}
-                    onChange={(event) =>
-                      setWidgetDraft((current) =>
-                        current ? { ...current, title: event.target.value } : current,
-                      )
-                    }
-                  />
-                  <select
-                    className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                    value={widgetDraft.type}
-                    onChange={(event) => {
-                      const nextType = event.target.value as WidgetType;
-                      setWidgetDraft((current) =>
-                        current
-                          ? {
-                              ...current,
-                              type: nextType,
-                              chartMode:
-                                nextType === 'chart'
-                                  ? current.chartMode ?? 'history'
-                                  : current.chartMode,
-                            }
-                          : current,
-                      );
-                    }}
-                  >
-                    {widgetTypes.map((type) => (
-                      <option key={type} value={type}>
-                        {widgetTypeLabels[type]}
-                      </option>
-                    ))}
-                  </select>
-                  {widgetDraft.type === 'chart' ? (
-                    <>
-                      <select
-                        className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                        value={widgetDraft.chartMode ?? 'history'}
-                        onChange={(event) => {
-                          const nextMode = event.target.value as 'history' | 'forecast';
-                          setWidgetDraft((current) =>
-                            current ? { ...current, chartMode: nextMode } : current,
-                          );
-                          setEntityFilter(getEntityFilterForWidget(widgetDraft.type, nextMode));
-                        }}
-                        onFocus={() =>
-                          setEntityFilter(
-                            getEntityFilterForWidget(
-                              widgetDraft.type,
-                              widgetDraft.chartMode ?? 'history',
-                            ),
-                          )
-                        }
-                      >
-                        <option value="history">Storico</option>
-                        <option value="forecast">Previsione</option>
-                      </select>
-                      <div className="flex flex-wrap gap-2">
-                        {(widgetDraft.chartEntityIds ?? []).length === 0 ? (
-                          <span className="text-xs text-ink/50">Nessuna entita selezionata.</span>
-                        ) : (
-                          (widgetDraft.chartEntityIds ?? []).map((entry) => (
-                            <div
-                              key={entry}
-                              className="w-full rounded-2xl border border-white/50 bg-white/60 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-ink/60"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="truncate">{getEntityDisplayName(entry)}</span>
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    type="color"
-                                    className="h-6 w-8 cursor-pointer rounded border border-white/50 bg-white/70 p-0"
-                                    value={widgetDraft.chartEntityColors?.[entry] ?? '#63d1ff'}
-                                    onChange={(event) =>
-                                      setWidgetDraft((current) =>
-                                        current
-                                          ? {
-                                              ...current,
-                                              chartEntityColors: updateEntityColor(
-                                                current.chartEntityColors,
-                                                entry,
-                                                event.target.value,
-                                              ),
-                                            }
-                                          : current,
-                                      )
-                                    }
-                                  />
-                                  <button
-                                    type="button"
-                                    className="text-ink/60 transition hover:text-ink"
-                                    onClick={() =>
-                                      setWidgetDraft((current) =>
-                                        current
-                                          ? {
-                                              ...current,
-                                              chartEntityIds: (current.chartEntityIds ?? []).filter(
-                                                (value) => value !== entry,
-                                              ),
-                                              chartEntityLabels: removeEntityLabel(
-                                                current.chartEntityLabels,
-                                                entry,
-                                              ),
-                                              chartEntityColors: removeEntityColor(
-                                                current.chartEntityColors,
-                                                entry,
-                                              ),
-                                            }
-                                          : current,
-                                      )
-                                    }
-                                  >
-                                    ✕
-                                  </button>
-                                </div>
-                              </div>
-                              <input
-                                className="mt-2 w-full rounded-lg border border-white/50 bg-white/70 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-ink/70"
-                                placeholder="Nome serie"
-                                value={widgetDraft.chartEntityLabels?.[entry] ?? ''}
-                                onChange={(event) =>
-                                  setWidgetDraft((current) =>
-                                    current
-                                      ? {
-                                          ...current,
-                                          chartEntityLabels: updateEntityLabel(
-                                            current.chartEntityLabels,
-                                            entry,
-                                            event.target.value,
-                                          ),
-                                        }
-                                      : current,
-                                  )
-                                }
-                              />
-                            </div>
-                          ))
-                        )}
-                      </div>
-                      <div className="flex gap-2">
-                        <input
-                          className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                          placeholder="entity_id"
-                          value={chartEntityDraft}
-                          onChange={(event) => {
-                            setChartEntityDraft(event.target.value);
-                            setEntityQuery(event.target.value);
-                            setEntityFilter(
-                              getEntityFilterForWidget(
-                                widgetDraft.type,
-                                widgetDraft.chartMode ?? 'history',
-                              ),
-                            );
-                          }}
-                          onFocus={() =>
-                            setEntityFilter(
-                              getEntityFilterForWidget(
-                                widgetDraft.type,
-                                widgetDraft.chartMode ?? 'history',
-                              ),
-                            )
-                          }
-                          list="ha-entities"
-                        />
-                        <GlassButton
-                          tone="ghost"
-                          className="px-3 text-[10px] uppercase tracking-[0.2em]"
-                          onClick={() => {
-                            const entries = parseEntityIds(chartEntityDraft);
-                            if (entries.length === 0) return;
-                            let next = widgetDraft.chartEntityIds ?? [];
-                            entries.forEach((entry) => {
-                              next = addEntityId(next, entry);
-                            });
-                            setWidgetDraft((current) =>
-                              current ? { ...current, chartEntityIds: next } : current,
-                            );
-                            setChartEntityDraft('');
-                          }}
-                        >
-                          Aggiungi
-                        </GlassButton>
-                      </div>
-                      {widgetDraft.chartMode !== 'forecast' && (
-                        <select
-                          className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                          value={widgetDraft.chartRangeHours ?? 24}
-                          onChange={(event) =>
-                            setWidgetDraft((current) =>
-                              current
-                                ? { ...current, chartRangeHours: Number(event.target.value) }
-                                : current,
-                            )
-                          }
-                        >
-                          {chartRanges.map((range) => (
-                            <option key={range.value} value={range.value}>
-                              {range.label}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      <input
-                        className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                        placeholder="Unita asse Y (es. °C, kWh)"
-                        value={widgetDraft.unit ?? ''}
-                        onChange={(event) =>
-                          setWidgetDraft((current) =>
-                            current ? { ...current, unit: event.target.value } : current,
-                          )
-                        }
-                      />
-                    </>
-                  ) : (
-                    <input
-                      className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                      placeholder="entity_id (opzionale)"
-                      value={widgetDraft.entityId ?? ''}
-                      onChange={(event) => {
-                        setEntityQuery(event.target.value);
-                        setEntityFilter(getEntityFilterForWidget(widgetDraft.type));
-                        setWidgetDraft((current) =>
-                          current ? { ...current, entityId: event.target.value } : current,
-                        );
-                      }}
-                      onFocus={() => setEntityFilter(getEntityFilterForWidget(widgetDraft.type))}
-                      list="ha-entities"
-                    />
-                  )}
-                  {hasWidgetDraftChanges && (
-                    <p className="text-[10px] uppercase tracking-[0.2em] text-orange-600">
-                      Modifiche non salvate
-                    </p>
-                  )}
-                  <div className="flex gap-2">
+      <div className="grid gap-6">
+        <GlassPanel
+          ref={gridRef}
+          className="grid auto-rows-[140px] gap-4 grid-cols-1 sm:grid-cols-6 lg:grid-cols-12 [--grid-cols:1] [--grid-gap:1rem] [--grid-row:140px] sm:[--grid-cols:6] lg:[--grid-cols:12]"
+        >
+          {activeView.widgets.map((widget) => {
+            const preview = resizePreview[widget.id];
+            const colSpan = clamp(preview?.span ?? normalizeSpan(widget), 1, gridColumns);
+            const rowSpan = clamp(preview?.rowSpan ?? normalizeRowSpan(widget), 1, MAX_ROW_SPAN);
+            return (
+              <GlassCard
+                key={widget.id}
+                data-widget-card
+                className={`${getWidgetGridClasses(editMode)} ${
+                  draggingWidgetId === widget.id ? 'opacity-70 ring-2 ring-ink/20' : ''
+                } ${dragOverWidgetId === widget.id ? 'ring-2 ring-ink/40' : ''}`}
+                style={{
+                  gridColumn: `span ${colSpan} / span ${colSpan}`,
+                  gridRow: `span ${rowSpan} / span ${rowSpan}`,
+                }}
+                draggable={editMode && !resizingWidgetId}
+                onDragStart={(event) => {
+                  if (!editMode || resizingWidgetId) return;
+                  event.dataTransfer.setData('text/plain', widget.id);
+                  event.dataTransfer.effectAllowed = 'move';
+                  setDraggingWidgetId(widget.id);
+                }}
+                onDragEnd={() => {
+                  setDraggingWidgetId(null);
+                  setDragOverWidgetId(null);
+                }}
+                onDragOver={(event) => {
+                  if (!editMode || resizingWidgetId) return;
+                  event.preventDefault();
+                  setDragOverWidgetId(widget.id);
+                }}
+                onDragLeave={() => {
+                  setDragOverWidgetId((current) => (current === widget.id ? null : current));
+                }}
+                onDrop={async (event) => {
+                  if (!editMode || resizingWidgetId) return;
+                  event.preventDefault();
+                  const sourceId = event.dataTransfer.getData('text/plain');
+                  if (!sourceId) return;
+                  await handleMoveWidget(sourceId, widget.id);
+                  setDraggingWidgetId(null);
+                  setDragOverWidgetId(null);
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold">{widget.title}</p>
+                  {editMode && (
                     <GlassButton
-                      tone="accent"
-                      className="w-full"
-                      onClick={handleSaveWidget}
-                      disabled={!hasWidgetDraftChanges}
+                      tone="ghost"
+                      className="px-2 py-1 text-[10px]"
+                      onClick={() =>
+                        setSelectedWidgetId((current) => (current === widget.id ? null : widget.id))
+                      }
                     >
-                      Salva widget
+                      {selectedWidgetId === widget.id ? 'Chiudi' : 'Modifica'}
                     </GlassButton>
-                    <GlassButton tone="ghost" className="w-full" onClick={handleRemoveWidget}>
-                      Rimuovi widget
-                    </GlassButton>
-                  </div>
+                  )}
                 </div>
-              )}
+                <WidgetRenderer widget={widget} />
+                {editMode && (
+                  <button
+                    type="button"
+                    className="absolute bottom-3 right-3 flex h-9 w-9 items-center justify-center rounded-full border border-white/70 bg-white/80 text-base font-semibold text-ink shadow-glass backdrop-blur-glass transition hover:bg-white"
+                    onPointerDown={(event) => handleResizeStart(event, widget)}
+                    aria-label="Ridimensiona widget"
+                    title="Ridimensiona"
+                  >
+                    ↘
+                  </button>
+                )}
             </GlassCard>
-          ))}
+          );
+        })}
         </GlassPanel>
 
-        {editMode && (
-          <GlassPanel className="space-y-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-ink/50">Editor</p>
-              <h2 className="text-lg font-semibold">Configura widget</h2>
+      </div>
+      {editMode && widgetDraft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-900/30"
+            onClick={() => setSelectedWidgetId(null)}
+          />
+          <GlassPanel className="relative z-10 w-full max-w-4xl space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-ink/50">Modifica widget</p>
+                <h2 className="text-lg font-semibold">{widgetDraft.title || 'Widget'}</h2>
+              </div>
+              <GlassButton tone="ghost" onClick={() => setSelectedWidgetId(null)}>
+                Chiudi
+              </GlassButton>
             </div>
-
-            <div className="space-y-4">
+            <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+              <GlassCard className="min-h-[220px]">
+                <WidgetRenderer widget={widgetDraft} />
+              </GlassCard>
               <div className="space-y-2">
-                <p className="text-xs uppercase tracking-[0.2em] text-ink/50">Nuovo widget</p>
                 <input
                   className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
                   placeholder="Titolo"
-                  value={newWidget.title}
-                  onChange={(event) => setNewWidget({ ...newWidget, title: event.target.value })}
+                  value={widgetDraft.title}
+                  onChange={(event) =>
+                    setWidgetDraft((current) =>
+                      current ? { ...current, title: event.target.value } : current,
+                    )
+                  }
                 />
                 <select
                   className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                  value={newWidget.type}
+                  value={widgetDraft.type}
                   onChange={(event) => {
                     const nextType = event.target.value as WidgetType;
-                    setNewWidget((current) => ({
-                      ...current,
-                      type: nextType,
-                      chartRangeHours:
-                        nextType === 'chart' ? current.chartRangeHours ?? 24 : current.chartRangeHours,
-                      chartMode: nextType === 'chart' ? current.chartMode ?? 'history' : current.chartMode,
-                    }));
+                    setWidgetDraft((current) =>
+                      current
+                        ? {
+                            ...current,
+                            type: nextType,
+                            chartMode:
+                              nextType === 'chart'
+                                ? current.chartMode ?? 'history'
+                                : current.chartMode,
+                          }
+                        : current,
+                    );
                   }}
                 >
-                    {widgetTypes.map((type) => (
-                      <option key={type} value={type}>
-                        {widgetTypeLabels[type]}
-                      </option>
-                    ))}
-                  </select>
-                {newWidget.type === 'chart' ? (
+                  {widgetTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {widgetTypeLabels[type]}
+                    </option>
+                  ))}
+                </select>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-ink/50">Larghezza</p>
+                    <select
+                      className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                      value={normalizeSpan(widgetDraft)}
+                      onChange={(event) =>
+                        setWidgetDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                span: Number(event.target.value),
+                                spanMode: 'grid',
+                              }
+                            : current,
+                        )
+                      }
+                    >
+                      {widgetSpanOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-ink/50">Altezza</p>
+                    <select
+                      className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                      value={normalizeRowSpan(widgetDraft)}
+                      onChange={(event) =>
+                        setWidgetDraft((current) =>
+                          current ? { ...current, rowSpan: Number(event.target.value) } : current,
+                        )
+                      }
+                    >
+                      {widgetRowSpanOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {widgetDraft.type === 'chart' ? (
                   <>
                     <select
                       className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                      value={newWidget.chartMode ?? 'history'}
+                      value={widgetDraft.chartMode ?? 'history'}
                       onChange={(event) => {
                         const nextMode = event.target.value as 'history' | 'forecast';
-                        setNewWidget({
-                          ...newWidget,
-                          chartMode: nextMode,
-                        });
-                        setEntityFilter(getEntityFilterForWidget(newWidget.type, nextMode));
+                        setWidgetDraft((current) =>
+                          current ? { ...current, chartMode: nextMode } : current,
+                        );
+                        setEntityFilter(getEntityFilterForWidget(widgetDraft.type, nextMode));
                       }}
                       onFocus={() =>
                         setEntityFilter(
-                          getEntityFilterForWidget(newWidget.type, newWidget.chartMode ?? 'history'),
+                          getEntityFilterForWidget(
+                            widgetDraft.type,
+                            widgetDraft.chartMode ?? 'history',
+                          ),
                         )
                       }
                     >
@@ -728,10 +834,10 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                       <option value="forecast">Previsione</option>
                     </select>
                     <div className="flex flex-wrap gap-2">
-                      {(newWidget.chartEntityIds ?? []).length === 0 ? (
+                      {(widgetDraft.chartEntityIds ?? []).length === 0 ? (
                         <span className="text-xs text-ink/50">Nessuna entita selezionata.</span>
                       ) : (
-                        (newWidget.chartEntityIds ?? []).map((entry) => (
+                        (widgetDraft.chartEntityIds ?? []).map((entry) => (
                           <div
                             key={entry}
                             className="w-full rounded-2xl border border-white/50 bg-white/60 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-ink/60"
@@ -742,36 +848,44 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                                 <input
                                   type="color"
                                   className="h-6 w-8 cursor-pointer rounded border border-white/50 bg-white/70 p-0"
-                                  value={newWidget.chartEntityColors?.[entry] ?? '#63d1ff'}
+                                  value={widgetDraft.chartEntityColors?.[entry] ?? '#63d1ff'}
                                   onChange={(event) =>
-                                    setNewWidget({
-                                      ...newWidget,
-                                      chartEntityColors: updateEntityColor(
-                                        newWidget.chartEntityColors,
-                                        entry,
-                                        event.target.value,
-                                      ),
-                                    })
+                                    setWidgetDraft((current) =>
+                                      current
+                                        ? {
+                                            ...current,
+                                            chartEntityColors: updateEntityColor(
+                                              current.chartEntityColors,
+                                              entry,
+                                              event.target.value,
+                                            ),
+                                          }
+                                        : current,
+                                    )
                                   }
                                 />
                                 <button
                                   type="button"
                                   className="text-ink/60 transition hover:text-ink"
                                   onClick={() =>
-                                    setNewWidget({
-                                      ...newWidget,
-                                      chartEntityIds: (newWidget.chartEntityIds ?? []).filter(
-                                        (value) => value !== entry,
-                                      ),
-                                      chartEntityLabels: removeEntityLabel(
-                                        newWidget.chartEntityLabels,
-                                        entry,
-                                      ),
-                                      chartEntityColors: removeEntityColor(
-                                        newWidget.chartEntityColors,
-                                        entry,
-                                      ),
-                                    })
+                                    setWidgetDraft((current) =>
+                                      current
+                                        ? {
+                                            ...current,
+                                            chartEntityIds: (current.chartEntityIds ?? []).filter(
+                                              (value) => value !== entry,
+                                            ),
+                                            chartEntityLabels: removeEntityLabel(
+                                              current.chartEntityLabels,
+                                              entry,
+                                            ),
+                                            chartEntityColors: removeEntityColor(
+                                              current.chartEntityColors,
+                                              entry,
+                                            ),
+                                          }
+                                        : current,
+                                    )
                                   }
                                 >
                                   ✕
@@ -781,16 +895,20 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                             <input
                               className="mt-2 w-full rounded-lg border border-white/50 bg-white/70 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-ink/70"
                               placeholder="Nome serie"
-                              value={newWidget.chartEntityLabels?.[entry] ?? ''}
+                              value={widgetDraft.chartEntityLabels?.[entry] ?? ''}
                               onChange={(event) =>
-                                setNewWidget({
-                                  ...newWidget,
-                                  chartEntityLabels: updateEntityLabel(
-                                    newWidget.chartEntityLabels,
-                                    entry,
-                                    event.target.value,
-                                  ),
-                                })
+                                setWidgetDraft((current) =>
+                                  current
+                                    ? {
+                                        ...current,
+                                        chartEntityLabels: updateEntityLabel(
+                                          current.chartEntityLabels,
+                                          entry,
+                                          event.target.value,
+                                        ),
+                                      }
+                                    : current,
+                                )
                               }
                             />
                           </div>
@@ -798,50 +916,59 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                       )}
                     </div>
                     <div className="flex gap-2">
-                        <input
-                          className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                          placeholder="entity_id"
-                          value={newChartEntityDraft}
-                          onChange={(event) => {
-                            setNewChartEntityDraft(event.target.value);
-                            setEntityQuery(event.target.value);
-                            setEntityFilter(
-                              getEntityFilterForWidget(newWidget.type, newWidget.chartMode ?? 'history'),
-                            );
-                          }}
-                          onFocus={() =>
-                            setEntityFilter(
-                              getEntityFilterForWidget(newWidget.type, newWidget.chartMode ?? 'history'),
-                            )
-                          }
-                          list="ha-entities"
-                        />
+                      <input
+                        className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                        placeholder="entity_id"
+                        value={chartEntityDraft}
+                        onChange={(event) => {
+                          setChartEntityDraft(event.target.value);
+                          setEntityQuery(event.target.value);
+                          setEntityFilter(
+                            getEntityFilterForWidget(
+                              widgetDraft.type,
+                              widgetDraft.chartMode ?? 'history',
+                            ),
+                          );
+                        }}
+                        onFocus={() =>
+                          setEntityFilter(
+                            getEntityFilterForWidget(
+                              widgetDraft.type,
+                              widgetDraft.chartMode ?? 'history',
+                            ),
+                          )
+                        }
+                        list="ha-entities"
+                      />
                       <GlassButton
                         tone="ghost"
                         className="px-3 text-[10px] uppercase tracking-[0.2em]"
                         onClick={() => {
-                          const entries = parseEntityIds(newChartEntityDraft);
+                          const entries = parseEntityIds(chartEntityDraft);
                           if (entries.length === 0) return;
-                          let next = newWidget.chartEntityIds ?? [];
+                          let next = widgetDraft.chartEntityIds ?? [];
                           entries.forEach((entry) => {
                             next = addEntityId(next, entry);
                           });
-                          setNewWidget({ ...newWidget, chartEntityIds: next });
-                          setNewChartEntityDraft('');
+                          setWidgetDraft((current) =>
+                            current ? { ...current, chartEntityIds: next } : current,
+                          );
+                          setChartEntityDraft('');
                         }}
                       >
                         Aggiungi
                       </GlassButton>
                     </div>
-                    {newWidget.chartMode !== 'forecast' && (
+                    {widgetDraft.chartMode !== 'forecast' && (
                       <select
                         className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
-                        value={newWidget.chartRangeHours ?? 24}
+                        value={widgetDraft.chartRangeHours ?? 24}
                         onChange={(event) =>
-                          setNewWidget({
-                            ...newWidget,
-                            chartRangeHours: Number(event.target.value),
-                          })
+                          setWidgetDraft((current) =>
+                            current
+                              ? { ...current, chartRangeHours: Number(event.target.value) }
+                              : current,
+                          )
                         }
                       >
                         {chartRanges.map((range) => (
@@ -854,12 +981,11 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                     <input
                       className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
                       placeholder="Unita asse Y (es. °C, kWh)"
-                      value={newWidget.unit ?? ''}
+                      value={widgetDraft.unit ?? ''}
                       onChange={(event) =>
-                        setNewWidget({
-                          ...newWidget,
-                          unit: event.target.value,
-                        })
+                        setWidgetDraft((current) =>
+                          current ? { ...current, unit: event.target.value } : current,
+                        )
                       }
                     />
                   </>
@@ -867,25 +993,321 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                   <input
                     className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
                     placeholder="entity_id (opzionale)"
-                    value={newWidget.entityId ?? ''}
+                    value={widgetDraft.entityId ?? ''}
                     onChange={(event) => {
                       setEntityQuery(event.target.value);
-                      setEntityFilter(getEntityFilterForWidget(newWidget.type));
-                      setNewWidget({ ...newWidget, entityId: event.target.value });
+                      setEntityFilter(getEntityFilterForWidget(widgetDraft.type));
+                      setWidgetDraft((current) =>
+                        current ? { ...current, entityId: event.target.value } : current,
+                      );
                     }}
-                    onFocus={() => setEntityFilter(getEntityFilterForWidget(newWidget.type))}
+                    onFocus={() => setEntityFilter(getEntityFilterForWidget(widgetDraft.type))}
                     list="ha-entities"
                   />
                 )}
-                <GlassButton tone="accent" className="w-full" onClick={handleAddWidget}>
-                  Aggiungi
-                </GlassButton>
+                {hasWidgetDraftChanges && (
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-orange-600">
+                    Modifiche non salvate
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <GlassButton
+                    tone="accent"
+                    className="w-full"
+                    onClick={handleSaveWidget}
+                    disabled={!hasWidgetDraftChanges}
+                  >
+                    Salva widget
+                  </GlassButton>
+                  <GlassButton tone="ghost" className="w-full" onClick={handleRemoveWidget}>
+                    Rimuovi widget
+                  </GlassButton>
+                </div>
               </div>
-
             </div>
           </GlassPanel>
-        )}
-      </div>
+        </div>
+      )}
+      {editMode && isNewWidgetOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-900/30"
+            onClick={() => setIsNewWidgetOpen(false)}
+          />
+          <GlassPanel className="relative z-10 w-full max-w-xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-ink/50">Nuovo widget</p>
+                <h2 className="text-lg font-semibold">Configura widget</h2>
+              </div>
+              <GlassButton tone="ghost" onClick={() => setIsNewWidgetOpen(false)}>
+                Chiudi
+              </GlassButton>
+            </div>
+            <div className="space-y-2">
+              <input
+                className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                placeholder="Titolo"
+                value={newWidget.title}
+                onChange={(event) => setNewWidget({ ...newWidget, title: event.target.value })}
+              />
+              <select
+                className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                value={newWidget.type}
+                onChange={(event) => {
+                  const nextType = event.target.value as WidgetType;
+                  setNewWidget((current) => ({
+                    ...current,
+                    type: nextType,
+                    chartRangeHours:
+                      nextType === 'chart' ? current.chartRangeHours ?? 24 : current.chartRangeHours,
+                    chartMode: nextType === 'chart' ? current.chartMode ?? 'history' : current.chartMode,
+                  }));
+                }}
+              >
+                {widgetTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {widgetTypeLabels[type]}
+                  </option>
+                ))}
+              </select>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-ink/50">Larghezza</p>
+                  <select
+                    className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                    value={newWidget.span ?? 4}
+                    onChange={(event) =>
+                      setNewWidget({
+                        ...newWidget,
+                        span: Number(event.target.value),
+                        spanMode: 'grid',
+                      })
+                    }
+                  >
+                    {widgetSpanOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-ink/50">Altezza</p>
+                  <select
+                    className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                    value={newWidget.rowSpan ?? 1}
+                    onChange={(event) =>
+                      setNewWidget({
+                        ...newWidget,
+                        rowSpan: Number(event.target.value),
+                      })
+                    }
+                  >
+                    {widgetRowSpanOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {newWidget.type === 'chart' ? (
+                <>
+                  <select
+                    className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                    value={newWidget.chartMode ?? 'history'}
+                    onChange={(event) => {
+                      const nextMode = event.target.value as 'history' | 'forecast';
+                      setNewWidget({
+                        ...newWidget,
+                        chartMode: nextMode,
+                      });
+                      setEntityFilter(getEntityFilterForWidget(newWidget.type, nextMode));
+                    }}
+                    onFocus={() =>
+                      setEntityFilter(
+                        getEntityFilterForWidget(newWidget.type, newWidget.chartMode ?? 'history'),
+                      )
+                    }
+                  >
+                    <option value="history">Storico</option>
+                    <option value="forecast">Previsione</option>
+                  </select>
+                  <div className="flex flex-wrap gap-2">
+                    {(newWidget.chartEntityIds ?? []).length === 0 ? (
+                      <span className="text-xs text-ink/50">Nessuna entita selezionata.</span>
+                    ) : (
+                      (newWidget.chartEntityIds ?? []).map((entry) => (
+                        <div
+                          key={entry}
+                          className="w-full rounded-2xl border border-white/50 bg-white/60 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-ink/60"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate">{getEntityDisplayName(entry)}</span>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="color"
+                                className="h-6 w-8 cursor-pointer rounded border border-white/50 bg-white/70 p-0"
+                                value={newWidget.chartEntityColors?.[entry] ?? '#63d1ff'}
+                                onChange={(event) =>
+                                  setNewWidget({
+                                    ...newWidget,
+                                    chartEntityColors: updateEntityColor(
+                                      newWidget.chartEntityColors,
+                                      entry,
+                                      event.target.value,
+                                    ),
+                                  })
+                                }
+                              />
+                              <button
+                                type="button"
+                                className="text-ink/60 transition hover:text-ink"
+                                onClick={() =>
+                                  setNewWidget({
+                                    ...newWidget,
+                                    chartEntityIds: (newWidget.chartEntityIds ?? []).filter(
+                                      (value) => value !== entry,
+                                    ),
+                                    chartEntityLabels: removeEntityLabel(
+                                      newWidget.chartEntityLabels,
+                                      entry,
+                                    ),
+                                    chartEntityColors: removeEntityColor(
+                                      newWidget.chartEntityColors,
+                                      entry,
+                                    ),
+                                  })
+                                }
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                          <input
+                            className="mt-2 w-full rounded-lg border border-white/50 bg-white/70 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-ink/70"
+                            placeholder="Nome serie"
+                            value={newWidget.chartEntityLabels?.[entry] ?? ''}
+                            onChange={(event) =>
+                              setNewWidget({
+                                ...newWidget,
+                                chartEntityLabels: updateEntityLabel(
+                                  newWidget.chartEntityLabels,
+                                  entry,
+                                  event.target.value,
+                                ),
+                              })
+                            }
+                          />
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                      placeholder="entity_id"
+                      value={newChartEntityDraft}
+                      onChange={(event) => {
+                        setNewChartEntityDraft(event.target.value);
+                        setEntityQuery(event.target.value);
+                        setEntityFilter(
+                          getEntityFilterForWidget(newWidget.type, newWidget.chartMode ?? 'history'),
+                        );
+                      }}
+                      onFocus={() =>
+                        setEntityFilter(
+                          getEntityFilterForWidget(newWidget.type, newWidget.chartMode ?? 'history'),
+                        )
+                      }
+                      list="ha-entities"
+                    />
+                    <GlassButton
+                      tone="ghost"
+                      className="px-3 text-[10px] uppercase tracking-[0.2em]"
+                      onClick={() => {
+                        const entries = parseEntityIds(newChartEntityDraft);
+                        if (entries.length === 0) return;
+                        let next = newWidget.chartEntityIds ?? [];
+                        entries.forEach((entry) => {
+                          next = addEntityId(next, entry);
+                        });
+                        setNewWidget({ ...newWidget, chartEntityIds: next });
+                        setNewChartEntityDraft('');
+                      }}
+                    >
+                      Aggiungi
+                    </GlassButton>
+                  </div>
+                  {newWidget.chartMode !== 'forecast' && (
+                    <select
+                      className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                      value={newWidget.chartRangeHours ?? 24}
+                      onChange={(event) =>
+                        setNewWidget({
+                          ...newWidget,
+                          chartRangeHours: Number(event.target.value),
+                        })
+                      }
+                    >
+                      {chartRanges.map((range) => (
+                        <option key={range.value} value={range.value}>
+                          {range.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <input
+                    className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                    placeholder="Unita asse Y (es. °C, kWh)"
+                    value={newWidget.unit ?? ''}
+                    onChange={(event) =>
+                      setNewWidget({
+                        ...newWidget,
+                        unit: event.target.value,
+                      })
+                    }
+                  />
+                </>
+              ) : (
+                <input
+                  className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                  placeholder="entity_id (opzionale)"
+                  value={newWidget.entityId ?? ''}
+                  onChange={(event) => {
+                    setEntityQuery(event.target.value);
+                    setEntityFilter(getEntityFilterForWidget(newWidget.type));
+                    setNewWidget({ ...newWidget, entityId: event.target.value });
+                  }}
+                  onFocus={() => setEntityFilter(getEntityFilterForWidget(newWidget.type))}
+                  list="ha-entities"
+                />
+              )}
+              <div className="flex gap-2">
+                <GlassButton
+                  tone="accent"
+                  className="w-full"
+                  onClick={async () => {
+                    await handleAddWidget();
+                    setIsNewWidgetOpen(false);
+                  }}
+                >
+                  Aggiungi
+                </GlassButton>
+                <GlassButton
+                  tone="ghost"
+                  className="w-full"
+                  onClick={() => setIsNewWidgetOpen(false)}
+                >
+                  Annulla
+                </GlassButton>
+              </div>
+            </div>
+          </GlassPanel>
+        </div>
+      )}
       <datalist id="ha-entities">
         {filteredEntities.slice(0, 10).map((entity) => (
           <option
