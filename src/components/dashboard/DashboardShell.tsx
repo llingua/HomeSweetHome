@@ -22,12 +22,12 @@ type EntityOption = {
 };
 
 async function fetchConfig(): Promise<DashboardConfig> {
-  const response = await fetch('/api/dashboard', { cache: 'no-store' });
+  const response = await fetch('api/dashboard', { cache: 'no-store' });
   return response.json();
 }
 
 async function saveConfig(config: DashboardConfig) {
-  const response = await fetch('/api/dashboard', {
+  const response = await fetch('api/dashboard', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config),
@@ -185,7 +185,7 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
   const { data: entities } = useQuery({
     queryKey: ['ha-entities', entityQuery],
     queryFn: async () => {
-      const response = await fetch(`/api/ha/entities?q=${encodeURIComponent(entityQuery)}`);
+      const response = await fetch(`api/ha/entities?q=${encodeURIComponent(entityQuery)}`);
       const payload = await response.json();
       return payload.entities as EntityOption[];
     },
@@ -218,7 +218,7 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
     queryFn: async () => {
       if (entityIdsToResolve.length === 0) return [] as EntityOption[];
       const response = await fetch(
-        `/api/ha/entities?ids=${encodeURIComponent(entityIdsToResolve.join(','))}`,
+        `api/ha/entities?ids=${encodeURIComponent(entityIdsToResolve.join(','))}`,
       );
       const payload = await response.json();
       return payload.entities as EntityOption[];

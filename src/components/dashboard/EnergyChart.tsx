@@ -59,8 +59,8 @@ export function EnergyChart({ widget }: { widget: DashboardWidget }) {
     queryFn: async () => {
       const endpoint =
         mode === 'forecast'
-          ? `/api/ha/forecast?ids=${encodeURIComponent(entityIds.join(','))}`
-          : `/api/ha/history?ids=${encodeURIComponent(entityIds.join(','))}&rangeHours=${rangeHours}`;
+          ? `api/ha/forecast?ids=${encodeURIComponent(entityIds.join(','))}`
+          : `api/ha/history?ids=${encodeURIComponent(entityIds.join(','))}&rangeHours=${rangeHours}`;
       const response = await fetch(endpoint);
       const payload = await response.json();
       return payload.series as HistorySeries[];
