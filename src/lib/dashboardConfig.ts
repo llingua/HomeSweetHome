@@ -15,6 +15,8 @@ export type DashboardWidget = {
   chartEntityIds?: string[];
   chartRangeHours?: number;
   chartMode?: 'history' | 'forecast';
+  chartEntityLabels?: Record<string, string>;
+  chartEntityColors?: Record<string, string>;
   unit?: string;
   span?: number;
 };

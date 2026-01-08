@@ -36,6 +36,15 @@ async function saveConfig(config: DashboardConfig) {
 }
 
 const widgetTypes: WidgetType[] = ['stat', 'toggle', 'slider', 'chart', 'list', 'climate', 'map'];
+const widgetTypeLabels: Record<WidgetType, string> = {
+  stat: 'Valore',
+  toggle: 'Interruttore',
+  slider: 'Regolazione',
+  chart: 'Grafico',
+  list: 'Lista',
+  climate: 'Clima',
+  map: 'Mappa',
+};
 const chartRanges = [
   { label: '6h', value: 6 },
   { label: '12h', value: 12 },
@@ -102,6 +111,47 @@ function addEntityId(current: string[], value: string) {
   return [...current, trimmed];
 }
 
+function updateEntityLabel(
+  labels: Record<string, string> | undefined,
+  entityId: string,
+  value: string,
+) {
+  const next = { ...(labels ?? {}) };
+  const trimmed = value.trim();
+  if (!trimmed) {
+    delete next[entityId];
+  } else {
+    next[entityId] = trimmed;
+  }
+  return next;
+}
+
+function removeEntityLabel(labels: Record<string, string> | undefined, entityId: string) {
+  const next = { ...(labels ?? {}) };
+  delete next[entityId];
+  return next;
+}
+
+function updateEntityColor(
+  colors: Record<string, string> | undefined,
+  entityId: string,
+  value: string,
+) {
+  const next = { ...(colors ?? {}) };
+  if (!value) {
+    delete next[entityId];
+  } else {
+    next[entityId] = value;
+  }
+  return next;
+}
+
+function removeEntityColor(colors: Record<string, string> | undefined, entityId: string) {
+  const next = { ...(colors ?? {}) };
+  delete next[entityId];
+  return next;
+}
+
 export function DashboardShell({ viewId }: DashboardShellProps) {
   const queryClient = useQueryClient();
   const { editMode, toggleEditMode } = useDashboardStore();
@@ -124,6 +174,8 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
     chartEntityIds: [],
     chartRangeHours: 24,
     chartMode: 'history',
+    chartEntityLabels: {},
+    chartEntityColors: {},
   });
   const [entityQuery, setEntityQuery] = useState('');
   const [chartEntityDraft, setChartEntityDraft] = useState('');
@@ -139,20 +191,59 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
     },
   });
 
+  const activeView = useMemo(() => {
+    if (!config) return undefined;
+    return config.views.find((view) => view.id === viewId) ?? config.views[0];
+  }, [config, viewId]);
+
+  const entityIdsToResolve = useMemo(() => {
+    const ids = new Set<string>();
+    activeView?.widgets.forEach((widget) => {
+      if (widget.entityId) ids.add(widget.entityId);
+      (widget.chartEntityIds ?? []).forEach((entry) => ids.add(entry));
+    });
+    if (newWidget.entityId) ids.add(newWidget.entityId);
+    (newWidget.chartEntityIds ?? []).forEach((entry) => ids.add(entry));
+    if (chartEntityDraft) {
+      parseEntityIds(chartEntityDraft).forEach((entry) => ids.add(entry));
+    }
+    if (newChartEntityDraft) {
+      parseEntityIds(newChartEntityDraft).forEach((entry) => ids.add(entry));
+    }
+    return Array.from(ids);
+  }, [activeView?.widgets, newWidget, chartEntityDraft, newChartEntityDraft]);
+
+  const { data: resolvedEntities } = useQuery({
+    queryKey: ['ha-entities-by-id', entityIdsToResolve.join(',')],
+    queryFn: async () => {
+      if (entityIdsToResolve.length === 0) return [] as EntityOption[];
+      const response = await fetch(
+        `/api/ha/entities?ids=${encodeURIComponent(entityIdsToResolve.join(','))}`,
+      );
+      const payload = await response.json();
+      return payload.entities as EntityOption[];
+    },
+    enabled: entityIdsToResolve.length > 0,
+  });
+
   const filteredEntities = useMemo(() => {
     return (entities ?? []).filter((entity) => matchesEntityFilter(entity, entityFilter));
   }, [entities, entityFilter]);
 
   const entityNameById = useMemo(() => {
-    return new Map((entities ?? []).map((entity) => [entity.entity_id, getEntityLabel(entity)]));
-  }, [entities]);
+    const map = new Map<string, string>();
+    (resolvedEntities ?? []).forEach((entity) => {
+      map.set(entity.entity_id, getEntityLabel(entity));
+    });
+    (entities ?? []).forEach((entity) => {
+      if (!map.has(entity.entity_id)) {
+        map.set(entity.entity_id, getEntityLabel(entity));
+      }
+    });
+    return map;
+  }, [entities, resolvedEntities]);
 
   const getEntityDisplayName = (id: string) => entityNameById.get(id) ?? id;
-
-  const activeView = useMemo(() => {
-    if (!config) return undefined;
-    return config.views.find((view) => view.id === viewId) ?? config.views[0];
-  }, [config, viewId]);
 
   if (!config || !activeView) {
     return (
@@ -189,6 +280,8 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
       chartEntityIds: [],
       chartRangeHours: 24,
       chartMode: 'history',
+      chartEntityLabels: {},
+      chartEntityColors: {},
     });
     await mutateAsync(next);
   };
@@ -310,7 +403,7 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                   >
                     {widgetTypes.map((type) => (
                       <option key={type} value={type}>
-                        {type}
+                        {widgetTypeLabels[type]}
                       </option>
                     ))}
                   </select>
@@ -338,25 +431,65 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                           <span className="text-xs text-ink/50">Nessuna entita selezionata.</span>
                         ) : (
                           (widget.chartEntityIds ?? []).map((entry) => (
-                            <span
+                            <div
                               key={entry}
-                              className="flex items-center gap-2 rounded-full border border-white/50 bg-white/60 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-ink/60"
+                              className="w-full rounded-2xl border border-white/50 bg-white/60 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-ink/60"
                             >
-                              {getEntityDisplayName(entry)}
-                              <button
-                                type="button"
-                                className="text-ink/60 transition hover:text-ink"
-                                onClick={() =>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate">{getEntityDisplayName(entry)}</span>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="color"
+                                  className="h-6 w-8 cursor-pointer rounded border border-white/50 bg-white/70 p-0"
+                                  value={widget.chartEntityColors?.[entry] ?? '#63d1ff'}
+                                  onChange={(event) =>
+                                    handleUpdateWidget({
+                                      chartEntityColors: updateEntityColor(
+                                        widget.chartEntityColors,
+                                        entry,
+                                        event.target.value,
+                                      ),
+                                    })
+                                  }
+                                />
+                                <button
+                                  type="button"
+                                  className="text-ink/60 transition hover:text-ink"
+                                  onClick={() =>
+                                    handleUpdateWidget({
+                                      chartEntityIds: (widget.chartEntityIds ?? []).filter(
+                                        (value) => value !== entry,
+                                      ),
+                                      chartEntityLabels: removeEntityLabel(
+                                        widget.chartEntityLabels,
+                                        entry,
+                                      ),
+                                      chartEntityColors: removeEntityColor(
+                                        widget.chartEntityColors,
+                                        entry,
+                                      ),
+                                    })
+                                  }
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </div>
+                              <input
+                                className="mt-2 w-full rounded-lg border border-white/50 bg-white/70 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-ink/70"
+                                placeholder="Nome serie"
+                                value={widget.chartEntityLabels?.[entry] ?? ''}
+                                onChange={(event) =>
                                   handleUpdateWidget({
-                                    chartEntityIds: (widget.chartEntityIds ?? []).filter(
-                                      (value) => value !== entry,
+                                    chartEntityLabels: updateEntityLabel(
+                                      widget.chartEntityLabels,
+                                      entry,
+                                      event.target.value,
                                     ),
                                   })
                                 }
-                              >
-                                ✕
-                              </button>
-                            </span>
+                              />
+                            </div>
                           ))
                         )}
                       </div>
@@ -411,6 +544,12 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                           ))}
                         </select>
                       )}
+                      <input
+                        className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                        placeholder="Unita asse Y (es. °C, kWh)"
+                        value={widget.unit ?? ''}
+                        onChange={(event) => handleUpdateWidget({ unit: event.target.value })}
+                      />
                     </>
                   ) : (
                     <input
@@ -465,12 +604,12 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                     }));
                   }}
                 >
-                  {widgetTypes.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
+                    {widgetTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {widgetTypeLabels[type]}
+                      </option>
+                    ))}
+                  </select>
                 {newWidget.type === 'chart' ? (
                   <>
                     <select
@@ -498,26 +637,68 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                         <span className="text-xs text-ink/50">Nessuna entita selezionata.</span>
                       ) : (
                         (newWidget.chartEntityIds ?? []).map((entry) => (
-                          <span
+                          <div
                             key={entry}
-                            className="flex items-center gap-2 rounded-full border border-white/50 bg-white/60 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-ink/60"
+                            className="w-full rounded-2xl border border-white/50 bg-white/60 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-ink/60"
                           >
-                            {getEntityDisplayName(entry)}
-                            <button
-                              type="button"
-                              className="text-ink/60 transition hover:text-ink"
-                              onClick={() =>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate">{getEntityDisplayName(entry)}</span>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="color"
+                                  className="h-6 w-8 cursor-pointer rounded border border-white/50 bg-white/70 p-0"
+                                  value={newWidget.chartEntityColors?.[entry] ?? '#63d1ff'}
+                                  onChange={(event) =>
+                                    setNewWidget({
+                                      ...newWidget,
+                                      chartEntityColors: updateEntityColor(
+                                        newWidget.chartEntityColors,
+                                        entry,
+                                        event.target.value,
+                                      ),
+                                    })
+                                  }
+                                />
+                                <button
+                                  type="button"
+                                  className="text-ink/60 transition hover:text-ink"
+                                  onClick={() =>
+                                    setNewWidget({
+                                      ...newWidget,
+                                      chartEntityIds: (newWidget.chartEntityIds ?? []).filter(
+                                        (value) => value !== entry,
+                                      ),
+                                      chartEntityLabels: removeEntityLabel(
+                                        newWidget.chartEntityLabels,
+                                        entry,
+                                      ),
+                                      chartEntityColors: removeEntityColor(
+                                        newWidget.chartEntityColors,
+                                        entry,
+                                      ),
+                                    })
+                                  }
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </div>
+                            <input
+                              className="mt-2 w-full rounded-lg border border-white/50 bg-white/70 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-ink/70"
+                              placeholder="Nome serie"
+                              value={newWidget.chartEntityLabels?.[entry] ?? ''}
+                              onChange={(event) =>
                                 setNewWidget({
                                   ...newWidget,
-                                  chartEntityIds: (newWidget.chartEntityIds ?? []).filter(
-                                    (value) => value !== entry,
+                                  chartEntityLabels: updateEntityLabel(
+                                    newWidget.chartEntityLabels,
+                                    entry,
+                                    event.target.value,
                                   ),
                                 })
                               }
-                            >
-                              ✕
-                            </button>
-                          </span>
+                            />
+                          </div>
                         ))
                       )}
                     </div>
@@ -575,6 +756,17 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
                         ))}
                       </select>
                     )}
+                    <input
+                      className="w-full rounded-xl border border-white/50 bg-white/70 px-3 py-2 text-sm"
+                      placeholder="Unita asse Y (es. °C, kWh)"
+                      value={newWidget.unit ?? ''}
+                      onChange={(event) =>
+                        setNewWidget({
+                          ...newWidget,
+                          unit: event.target.value,
+                        })
+                      }
+                    />
                   </>
                 ) : (
                   <input
