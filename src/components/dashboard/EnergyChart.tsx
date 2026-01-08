@@ -92,9 +92,7 @@ export function EnergyChart({ widget }: { widget: DashboardWidget }) {
         }
       });
     });
-    return Array.from(rows.entries())
-      .sort((a, b) => a[0] - b[0])
-      .map((entry) => ({ time: entry[0], ...entry[1] }));
+    return Array.from(rows.values()).sort((a, b) => a.time - b.time);
   }, [data, mode, rangeHours]);
 
   const yDomain = useMemo(() => {
