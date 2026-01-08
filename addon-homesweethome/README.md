@@ -22,8 +22,8 @@ docker login ghcr.io
 docker buildx create --use
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/llingua/homesweethome-amd64:0.1.0 \
-  -t ghcr.io/llingua/homesweethome-aarch64:0.1.0 \
+  -t ghcr.io/llingua/homesweethome-amd64:0.2.8 \
+  -t ghcr.io/llingua/homesweethome-aarch64:0.2.8 \
   --push \
   ./addon-homesweethome
 ```
