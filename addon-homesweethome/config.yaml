@@ -1,5 +1,5 @@
 name: HomeSweetHome Dashboard
-version: 0.2.5
+version: 0.2.6
 slug: homesweethome
 description: Dashboard iOS-style liquid glass per Home Assistant
 arch:
@@ -21,6 +21,7 @@ ingress: true
 ingress_stream: true
 ingress_port: 8092
 hassio_api: true
+homeassistant_api: true
 
 ports:
   8092/tcp: null
