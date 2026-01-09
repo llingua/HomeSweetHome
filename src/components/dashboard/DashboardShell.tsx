@@ -433,6 +433,7 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
 
   const handleRemoveWidget = async () => {
     if (!selectedWidgetId) return;
+    if (!activeView) return;
     const next = JSON.parse(JSON.stringify(config)) as DashboardConfig;
     const view = next.views.find((entry) => entry.id === activeView.id);
     if (!view) return;
@@ -465,6 +466,7 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
 
   const handleMoveWidget = async (sourceId: string, targetId: string) => {
     if (sourceId === targetId) return;
+    if (!activeView) return;
     const next = JSON.parse(JSON.stringify(config)) as DashboardConfig;
     const view = next.views.find((entry) => entry.id === activeView.id);
     if (!view) return;
