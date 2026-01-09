@@ -372,6 +372,7 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
 
   const handleAddWidget = async () => {
     if (!newWidget.title.trim()) return;
+    if (!activeView) return;
     const next = JSON.parse(JSON.stringify(config)) as DashboardConfig;
     const view = next.views.find((entry) => entry.id === activeView.id);
     if (!view) return;
