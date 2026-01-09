@@ -362,6 +362,7 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
   const getEntityDisplayName = (id: string) => entityNameById.get(id) ?? id;
 
   const handleViewRename = async (value: string) => {
+    if (!activeView) return;
     const next = JSON.parse(JSON.stringify(config)) as DashboardConfig;
     const view = next.views.find((entry) => entry.id === activeView.id);
     if (!view) return;
@@ -410,18 +411,19 @@ export function DashboardShell({ viewId }: DashboardShellProps) {
     await mutateAsync(next);
   };
 
-  const handleUpdateWidgetById = async (
-    widgetId: string,
-    partial: Partial<DashboardWidget>,
-  ) => {
-    const next = JSON.parse(JSON.stringify(config)) as DashboardConfig;
-    const view = next.views.find((entry) => entry.id === activeView.id);
-    if (!view) return;
-    const widget = view.widgets.find((item) => item.id === widgetId);
-    if (!widget) return;
-    Object.assign(widget, partial);
-    await mutateAsync(next);
-  };
+  const handleUpdateWidgetById = useCallback(
+    async (widgetId: string, partial: Partial<DashboardWidget>) => {
+      if (!activeView) return;
+      const next = JSON.parse(JSON.stringify(config)) as DashboardConfig;
+      const view = next.views.find((entry) => entry.id === activeView.id);
+      if (!view) return;
+      const widget = view.widgets.find((item) => item.id === widgetId);
+      if (!widget) return;
+      Object.assign(widget, partial);
+      await mutateAsync(next);
+    },
+    [activeView, config, mutateAsync],
+  );
 
   useEffect(() => {
     updateWidgetByIdRef.current = handleUpdateWidgetById;
